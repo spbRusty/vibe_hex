@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Super Hexagon с PixiJS и Tone.js</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #1a1a1a;
+      font-family: Arial, sans-serif;
+      color: #fff;
+      overflow: hidden;
+    }
+
+    #container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #playButton {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 10px 20px;
+      font-size: 16px;
+      background-color: #ff007a;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 10;
+    }
+
+    #playButton:hover {
+      background-color: #cc0066;
+    }
+
+    #errorMessage {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: red;
+      font-size: 16px;
+      z-index: 20;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="errorMessage"></div>
+    <button id="playButton">Старт/Стоп</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.0/pixi.min.js"></script>
+  <script>
+    // Функция для проверки загрузки Tone.js
+    function waitForTone() {
+      return new Promise((resolve, reject) => {
+        const maxAttempts = 50; // Максимум 5 секунд (50 * 100ms)
+        let attempts = 0;
+
+        const checkTone = setInterval(() => {
+          if (window.Tone) {
+            clearInterval(checkTone);
+            resolve(window.Tone);
+          } else if (attempts >= maxAttempts) {
+            clearInterval(checkTone);
+            reject(new Error("Не удалось загрузить Tone.js. Пожалуйста, проверьте подключение к интернету."));
+          }
+          attempts++;
+        }, 100);
+      });
+    }
+
+    // Основной код, который будет выполняться после загрузки Tone.js
+    async function initGame() {
+      let Tone;
+      try {
+        Tone = await waitForTone();
+      } catch (error) {
+        const errorMessage = document.getElementById('errorMessage');
+        errorMessage.textContent = error.message;
+        errorMessage.style.display = 'block';
+        return;
+      }
+
+      // Инициализация синтезаторов
+      let leadSynth, guitarSynth, bassSynth, kick, snare;
+
+      function createSynths() {
+        leadSynth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: "triangle" },
+          detune: 5,
+          envelope: { attack: 0.05, decay: 0.3, sustain: 0.5, release: 1 },
+          volume: -5
+        }).toDestination();
+
+        guitarSynth = new Tone.MonoSynth({
+          oscillator: { type: "sawtooth" },
+          envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.2 },
+          volume: -8
+        }).toDestination();
+
+        bassSynth = new Tone.MonoSynth({
+          oscillator: { type: "sawtooth" },
+          filter: { Q: 2, type: "lowpass", frequency: 800 },
+          volume: -10
+        }).toDestination();
+
+        kick = new Tone.MembraneSynth({
+          pitchDecay: 0.05,
+          octaves: 10,
+          oscillator: { type: "sine" },
+          volume: -5
+        }).toDestination();
+
+        snare = new Tone.NoiseSynth({
+          noise: { type: "white" },
+          envelope: { attack: 0.001, decay: 0.2, sustain: 0 },
+          volume: -8
+        }).toDestination();
+      }
+
+      createSynths();
+
+      const chordProgression = [
+        ["C4", "E4", "G4"],
+        ["G4", "B4", "D5"],
+        ["A3", "C4", "E4"],
+        ["F4", "A4", "C5"]
+      ];
+      const bassProgression = ["C2", "G2", "A1", "F2"];
+      const chordNames = ["Cmaj", "Gmaj", "Amin", "Fmaj"];
+      const chordRoots = {
+        "Cmaj": "C4",
+        "Gmaj": "G4",
+        "Amin": "A3",
+        "Fmaj": "F4"
+      };
+
+      const melodyPatterns = {
+        "Cmaj": [["C4", "E4"], ["E4", "G4"], ["G4", "C5"]],
+        "Gmaj": [["G4", "B4"], ["B4", "D5"], ["D5", "G5"]],
+        "Amin": [["A3", "C4"], ["C4", "E4"], ["E4", "A4"]],
+        "Fmaj": [["F4", "A4"], ["A4", "C5"], ["C5", "F5"]]
+      };
+
+      Tone.Transport.bpm.value = 160;
+
+      const getRandomPattern = (patterns) => patterns[Math.floor(Math.random() * patterns.length)];
+
+      const app = new PIXI.Application({
+        width: window.innerWidth,
+        height: window.innerHeight,
+        backgroundColor: 0x2E1A47,
+        resizeTo: window
+      });
+      document.getElementById('container').appendChild(app.view);
+      console.log("PixiJS приложение инициализировано");
+
+      let centerX = app.screen.width / 2;
+      let centerY = app.screen.height / 2;
+      const baseHexRadius = 50;
+      let currentHexRadius = baseHexRadius;
+      let targetHexRadius = baseHexRadius;
+      let rotationAngle = 0;
+      let rotationSpeed = 0.02;
+      let tiltAngle = 0;
+      let tiltTime = 0;
+
+      let obstacles = [];
+      let lastSide = null;
+
+      window.addEventListener('resize', () => {
+        centerX = app.screen.width / 2;
+        centerY = app.screen.height / 2;
+        console.log("Размер окна изменён");
+      });
+
+      const gameContainer = new PIXI.Container();
+      app.stage.addChild(gameContainer);
+
+      let cursorPosition = 0;
+      const positions = [Math.PI / 6, Math.PI / 2, 5 * Math.PI / 6, 7 * Math.PI / 6, 3 * Math.PI / 2, 11 * Math.PI / 6];
+      let cursorAngle = positions[cursorPosition];
+      let cursorGraphics = new PIXI.Graphics();
+      let isBlinking = false;
+      let blinkCount = 0;
+      let blinkTimer = 0;
+      let blinkInterval = 0.2;
+      let collisionBPM = 0;
+
+      const colorHues = Array.from({ length: 12 }, (_, i) => i * 30);
+      let colorOffset = 0;
+
+      function hslToHex(h, s, l) {
+        l /= 100;
+        const a = s * Math.min(l, 1 - l) / 100;
+        const f = n => {
+          const k = (n + h / 30) % 12;
+          const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+          return Math.round(255 * color).toString(16).padStart(2, '0');
+        };
+        return parseInt(`0x${f(0)}${f(8)}${f(4)}`);
+      }
+
+      function getColors() {
+        const hue1 = (colorOffset + 0) % 360;
+        const hue2 = (colorOffset + 30) % 360;
+        const hue3 = (colorOffset + 60) % 360;
+        return {
+          sectorColor1: hslToHex(hue1, 100, 50),
+          sectorColor2: hslToHex(hue3, 100, 50),
+          lineColor: hslToHex(hue2, 100, 50),
+          cursorColor: hslToHex((hue2 + 180) % 360, 100, 50)
+        };
+      }
+
+      function applyPerspective(x, y, tilt) {
+        const perspective = 0.001;
+        const yOffset = y - centerY;
+        const tiltOffset = yOffset * Math.sin(tilt) * perspective;
+        return { x: x + tiltOffset * yOffset, y: y };
+      }
+
+      function drawCursor() {
+        cursorGraphics.clear();
+        const cursorDistance = currentHexRadius + 10;
+        const totalAngle = rotationAngle + cursorAngle;
+        const baseX = centerX + cursorDistance * Math.cos(totalAngle);
+        const baseY = centerY + cursorDistance * Math.sin(totalAngle);
+        const p = applyPerspective(baseX, baseY, tiltAngle);
+        const cursorSize = 12;
+        const angle1 = totalAngle + Math.PI / 2;
+        const angle2 = totalAngle + Math.PI * (5/6);
+        const angle3 = totalAngle + Math.PI * (7/6);
+        const x1 = p.x + cursorSize * Math.cos(angle1);
+        const y1 = p.y + cursorSize * Math.sin(angle1);
+        const x2 = p.x + cursorSize * Math.cos(angle2);
+        const y2 = p.y + cursorSize * Math.sin(angle2);
+        const x3 = p.x + cursorSize * Math.cos(angle3);
+        const y3 = p.y + cursorSize * Math.sin(angle3);
+        const colors = getColors();
+        const color = isBlinking && Math.floor(blinkTimer / blinkInterval) % 2 === 0 ? 0xFF0000 : colors.cursorColor;
+        cursorGraphics.beginFill(color);
+        cursorGraphics.moveTo(x1, y1);
+        cursorGraphics.lineTo(x2, y2);
+        cursorGraphics.lineTo(x3, y3);
+        cursorGraphics.closePath();
+        cursorGraphics.endFill();
+        gameContainer.addChild(cursorGraphics);
+        return { p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 }, p3: { x: x3, y: y3 } };
+      }
+
+      let canMove = true;
+      window.addEventListener('keydown', (e) => {
+        if (!canMove || isBlinking) return;
+        if (e.key === 'ArrowLeft') {
+          cursorPosition = (cursorPosition - 1 + 6) % 6;
+          cursorAngle = positions[cursorPosition];
+          canMove = false;
+        } else if (e.key === 'ArrowRight') {
+          cursorPosition = (cursorPosition + 1) % 6;
+          cursorAngle = positions[cursorPosition];
+          canMove = false;
+        }
+      });
+
+      window.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') canMove = true;
+      });
+
+      function updateCursor() {}
+
+      function createObstacle() {
+        let side;
+        do { side = Math.floor(Math.random() * 6); }
+        while (lastSide !== null && side === lastSide);
+        lastSide = side;
+        const startRadius = Math.max(app.screen.width, app.screen.height) / 2;
+        const colors = getColors();
+        const obstacle = { side, radius: startRadius, speed: 3, graphics: new PIXI.Graphics(), color: colors.lineColor };
+        obstacles.push(obstacle);
+        console.log('Создано препятствие:', obstacle);
+      }
+
+      function lineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
+        const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (denom === 0) return null;
+        const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+        const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+          const px = x1 + t * (x2 - x1);
+          const py = y1 + t * (y2 - y1);
+          return { x: px, y: py };
+        }
+        return null;
+      }
+
+      function triangleIntersectsLine(p1, p2, p3, lineStart, lineEnd) {
+        return lineIntersection(p1.x, p1.y, p2.x, p2.y, lineStart.x, lineStart.y, lineEnd.x, lineEnd.y) ||
+               lineIntersection(p2.x, p2.y, p3.x, p3.y, lineStart.x, lineStart.y, lineEnd.x, lineEnd.y) ||
+               lineIntersection(p3.x, p3.y, p1.x, p1.y, lineStart.x, lineStart.y, lineEnd.x, lineEnd.y);
+      }
+
+      function drawObstacle(obstacle) {
+        obstacle.graphics.clear();
+        const angle1 = (Math.PI / 3) * obstacle.side + rotationAngle;
+        const angle2 = (Math.PI / 3) * (obstacle.side + 1) + rotationAngle;
+        const hexX1 = centerX + currentHexRadius * Math.cos(angle1);
+        const hexY1 = centerY + currentHexRadius * Math.sin(angle1);
+        const hexX2 = centerX + currentHexRadius * Math.cos(angle2);
+        const hexY2 = centerY + currentHexRadius * Math.sin(angle2);
+        const sideVectorX = hexX2 - hexX1;
+        const sideVectorY = hexY2 - hexY1;
+        const sideLength = Math.sqrt(sideVectorX * sideVectorX + sideVectorY * sideVectorY);
+        const sideDirX = sideVectorX / sideLength;
+        const sideDirY = sideVectorY / sideLength;
+        const centerToSideX = (hexX1 + hexX2) / 2 - centerX;
+        const centerToSideY = (hexY1 + hexY2) / 2 - centerY;
+        let perpDirX = -sideDirY, perpDirY = sideDirX;
+        if (centerToSideX * perpDirX + centerToSideY * perpDirY < 0) {
+          perpDirX = -perpDirX;
+          perpDirY = -perpDirY;
+        }
+        const sideCenterX = (hexX1 + hexX2) / 2;
+        const sideCenterY = (hexY1 + hexY2) / 2;
+        const lineCenterX = sideCenterX + perpDirX * (obstacle.radius - currentHexRadius);
+        const lineCenterY = sideCenterY + perpDirY * (obstacle.radius - currentHexRadius);
+        const farPoint = 10000;
+        const lineStartX = lineCenterX - farPoint * sideDirX;
+        const lineStartY = lineCenterY - farPoint * sideDirY;
+        const lineEndX = lineCenterX + farPoint * sideDirX;
+        const lineEndY = lineCenterY + farPoint * sideDirY;
+        const rayLength = Math.max(app.screen.width, app.screen.height);
+        const ray1EndX = centerX + rayLength * Math.cos(angle1);
+        const ray1EndY = centerY + rayLength * Math.sin(angle1);
+        const ray2EndX = centerX + rayLength * Math.cos(angle2);
+        const ray2EndY = centerY + rayLength * Math.sin(angle2);
+        const intersection1 = lineIntersection(lineStartX, lineStartY, lineEndX, lineEndY, centerX, centerY, ray1EndX, ray1EndY);
+        const intersection2 = lineIntersection(lineStartX, lineStartY, lineEndX, lineEndY, centerX, centerY, ray2EndX, ray2EndY);
+        if (intersection1 && intersection2) {
+          const p1 = applyPerspective(intersection1.x, intersection1.y, tiltAngle);
+          const p2 = applyPerspective(intersection2.x, intersection2.y, tiltAngle);
+          obstacle.graphics.lineStyle(5, obstacle.color);
+          obstacle.graphics.moveTo(p1.x, p1.y);
+          obstacle.graphics.lineTo(p2.x, p2.y);
+          return { start: { x: p1.x, y: p1.y }, end: { x: p2.x, y: p2.y } };
+        }
+        return null;
+      }
+
+      function updateObstacles() {
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+          const obstacle = obstacles[i];
+          obstacle.radius -= obstacle.speed;
+          if (obstacle.radius <= currentHexRadius) {
+            gameContainer.removeChild(obstacle.graphics);
+            obstacle.graphics.destroy();
+            obstacles.splice(i, 1);
+            console.log('Препятствие удалено:', obstacle);
+          } else {
+            const line = drawObstacle(obstacle);
+            if (line && !isBlinking) {
+              const cursorPoints = drawCursor();
+              if (triangleIntersectsLine(cursorPoints.p1, cursorPoints.p2, cursorPoints.p3, line.start, line.end)) {
+                startBlinking();
+              }
+            }
+            gameContainer.addChild(obstacle.graphics);
+          }
+        }
+      }
+
+      function startBlinking() {
+        isBlinking = true;
+        blinkCount = 0;
+        blinkTimer = 0;
+        collisionBPM = Tone.Transport.bpm.value;
+      }
+
+      function updateBlinking(delta) {
+        if (!isBlinking) return;
+        blinkTimer += delta / 60;
+        if (blinkTimer >= blinkInterval) {
+          blinkCount++;
+          blinkTimer = 0;
+        }
+        if (blinkCount >= 6) {
+          isBlinking = false;
+          restartScene();
+        }
+      }
+
+      async function restartScene() {
+        // Остановка всех звучащих нот
+        leadSynth.releaseAll();
+        guitarSynth.triggerRelease();
+        bassSynth.triggerRelease();
+        kick.triggerRelease();
+        snare.triggerRelease();
+
+        // Задержка для завершения всех событий
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        // Полная очистка: закрываем аудиоконтекст
+        await Tone.context.close();
+
+        // Создаём новый аудиоконтекст
+        Tone.setContext(new Tone.Context());
+
+        Tone.Transport.cancel();
+        Tone.Transport.stop();
+        if (loop) {
+          loop.stop();
+          loop.dispose();
+          loop = null;
+        }
+        if (bpmInterval) clearInterval(bpmInterval);
+
+        // Уничтожение старых синтезаторов
+        leadSynth.dispose();
+        guitarSynth.dispose();
+        bassSynth.dispose();
+        kick.dispose();
+        snare.dispose();
+
+        // Пересоздание синтезаторов
+        createSynths();
+
+        obstacles.forEach(obstacle => {
+          gameContainer.removeChild(obstacle.graphics);
+          obstacle.graphics.destroy();
+        });
+        obstacles = [];
+        lastSide = null;
+        currentHexRadius = baseHexRadius;
+        targetHexRadius = baseHexRadius;
+        rotationSpeed = 0.02;
+        const newBPM = Math.max(120, collisionBPM - 20);
+        Tone.Transport.bpm.value = newBPM;
+        await generateTrack();
+        Tone.Transport.start();
+        let currentBPM = newBPM;
+        bpmInterval = setInterval(() => {
+          currentBPM += 5;
+          Tone.Transport.bpm.value = currentBPM;
+          updateRotationSpeed(currentBPM);
+        }, 1000);
+      }
+
+      function drawHexagon() {
+        const hexGraphics = new PIXI.Graphics();
+        const colors = getColors();
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i + rotationAngle;
+          const nextAngle = (Math.PI / 3) * (i + 1) + rotationAngle;
+          const x1 = centerX + currentHexRadius * Math.cos(angle);
+          const y1 = centerY + currentHexRadius * Math.sin(angle);
+          const x2 = centerX + currentHexRadius * Math.cos(nextAngle);
+          const y2 = centerY + currentHexRadius * Math.sin(nextAngle);
+          const p1 = applyPerspective(x1, y1, tiltAngle);
+          const p2 = applyPerspective(x2, y2, tiltAngle);
+          const color = i % 2 === 0 ? colors.sectorColor1 : colors.sectorColor2;
+          hexGraphics.lineStyle(2, color);
+          hexGraphics.moveTo(p1.x, p1.y);
+          hexGraphics.lineTo(p2.x, p2.y);
+        }
+        gameContainer.addChild(hexGraphics);
+        return hexGraphics;
+      }
+
+      function drawSectorsAndRays() {
+        const sectorsGraphics = new PIXI.Graphics();
+        const colors = getColors();
+        const hexPoints = [];
+        const rayIntersections = [];
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i + rotationAngle;
+          const startX = centerX + currentHexRadius * Math.cos(angle);
+          const startY = centerY + currentHexRadius * Math.sin(angle);
+          const startP = applyPerspective(startX, startY, tiltAngle);
+          const endX = centerX + Math.max(app.screen.width, app.screen.height) * Math.cos(angle);
+          const endY = centerY + Math.max(app.screen.width, app.screen.height) * Math.sin(angle);
+          const endP = applyPerspective(endX, endY, tiltAngle);
+          hexPoints.push({ x: startP.x, y: startP.y });
+          rayIntersections.push({ x: endP.x, y: endP.y });
+          sectorsGraphics.lineStyle(1, colors.lineColor);
+          sectorsGraphics.moveTo(startP.x, startP.y);
+          sectorsGraphics.lineTo(endP.x, endP.y);
+        }
+        for (let i = 0; i < 6; i++) {
+          const start = hexPoints[i];
+          const end = hexPoints[(i + 1) % 6];
+          sectorsGraphics.beginFill(i % 2 === 0 ? colors.sectorColor1 : colors.sectorColor2);
+          sectorsGraphics.moveTo(start.x, start.y);
+          sectorsGraphics.lineTo(end.x, end.y);
+          sectorsGraphics.lineTo(rayIntersections[(i + 1) % 6].x, rayIntersections[(i + 1) % 6].y);
+          sectorsGraphics.lineTo(rayIntersections[i].x, rayIntersections[i].y);
+          sectorsGraphics.closePath();
+          sectorsGraphics.endFill();
+        }
+        gameContainer.addChild(sectorsGraphics);
+        return sectorsGraphics;
+      }
+
+      function updateRotationSpeed(bpm) {
+        rotationSpeed = 0.02 + (bpm - 160) * 0.0001;
+      }
+
+      function generateTrack() {
+        loop = new Tone.Loop(time => {
+          const position = Tone.Transport.position.split(":");
+          const measures = parseInt(position[0], 10);
+          const chordIndex = measures % chordProgression.length;
+          console.log("Chord Index:", chordIndex, "Chord Name:", chordNames[chordIndex]);
+
+          const chord = chordProgression[chordIndex];
+          const bassNote = bassProgression[chordIndex];
+          leadSynth.triggerAttackRelease(chord, "4n", time);
+          bassSynth.triggerAttackRelease(bassNote, "2n", time);
+
+          const patterns = melodyPatterns[chordNames[chordIndex]];
+          if (!patterns) {
+            console.error("Patterns undefined for chord:", chordNames[chordIndex]);
+            return;
+          }
+          const melody = getRandomPattern(patterns);
+          melody.forEach((note, idx) => guitarSynth.triggerAttackRelease(note, "8n", time + idx * Tone.Time("8n").toSeconds()));
+
+          if (measures % 2 === 0) kick.triggerAttackRelease("C2", "8n", time);
+          if (measures % 4 === 1 || measures % 4 === 3) snare.triggerAttackRelease("C2", "16n", time);
+        }, "1m");
+        loop.start(0);
+        return new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      let loop = null;
+      let bpmInterval = null;
+      document.getElementById('playButton').addEventListener('click', async () => {
+        if (Tone.Transport.state === 'started') {
+          // Остановка всех звучащих нот
+          leadSynth.releaseAll();
+          guitarSynth.triggerRelease();
+          bassSynth.triggerRelease();
+          kick.triggerRelease();
+          snare.triggerRelease();
+
+          // Задержка для завершения всех событий
+          await new Promise(resolve => setTimeout(resolve, 200));
+
+          // Полная очистка: закрываем аудиоконтекст
+          await Tone.context.close();
+
+          // Создаём новый аудиоконтекст
+          Tone.setContext(new Tone.Context());
+
+          Tone.Transport.cancel();
+          Tone.Transport.stop();
+          if (loop) {
+            loop.stop();
+            loop.dispose();
+            loop = null;
+          }
+          if (bpmInterval) clearInterval(bpmInterval);
+
+          // Уничтожение старых синтезаторов
+          leadSynth.dispose();
+          guitarSynth.dispose();
+          bassSynth.dispose();
+          kick.dispose();
+          snare.dispose();
+
+          // Пересоздание синтезаторов
+          createSynths();
+        } else {
+          await Tone.start();
+          console.log("Аудиоконтекст активирован");
+          await generateTrack();
+          Tone.Transport.start();
+          bpmInterval = setInterval(() => {
+            const currentBPM = Tone.Transport.bpm.value + 5;
+            Tone.Transport.bpm.value = currentBPM;
+            updateRotationSpeed(currentBPM);
+          }, 1000);
+        }
+      });
+
+      let hexGraphics, sectorsGraphics;
+      let obstacleTimer = 0;
+      const baseObstacleInterval = 2;
+
+      function animate(delta) {
+        console.log("Анимация запущена");
+        rotationAngle += rotationSpeed;
+        tiltTime += delta / 60;
+        tiltAngle = Math.sin(tiltTime * 0.1) * 0.2;
+
+        colorOffset = 360 * (Math.sin(tiltTime * 0.1) + 1) / 2;
+
+        const bpm = Tone.Transport.bpm.value;
+        const obstacleInterval = baseObstacleInterval * (160 / bpm);
+        obstacleTimer += delta / 60;
+        if (obstacleTimer >= obstacleInterval) {
+          createObstacle();
+          obstacleTimer = 0;
+        }
+
+        gameContainer.removeChild(hexGraphics);
+        gameContainer.removeChild(sectorsGraphics);
+        hexGraphics = drawHexagon();
+        sectorsGraphics = drawSectorsAndRays();
+        drawCursor();
+        updateObstacles();
+        updateBlinking(delta);
+        updateCursor();
+      }
+
+      app.ticker.add(animate);
+      hexGraphics = drawHexagon();
+      sectorsGraphics = drawSectorsAndRays();
+    }
+
+    // Запуск игры
+    initGame();
+  </script>
+</body>
+</html>
