@@ -11,6 +11,7 @@
       font-family: Arial, sans-serif;
       color: #fff;
       overflow: hidden;
+      touch-action: none; /* Предотвращаем стандартное поведение браузера */
     }
 
     #container {
@@ -24,14 +25,15 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      padding: 10px 20px;
-      font-size: 16px;
+      padding: 15px 30px; /* Увеличим размер кнопки для мобильных */
+      font-size: 20px; /* Увеличим шрифт */
       background-color: #ff007a;
       color: white;
       border: none;
-      border-radius: 5px;
+      border-radius: 8px;
       cursor: pointer;
       z-index: 10;
+      touch-action: manipulation; /* Улучшаем взаимодействие с кнопкой */
     }
 
     #playButton:hover {
@@ -47,6 +49,19 @@
       font-size: 16px;
       z-index: 20;
       display: none;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      #playButton {
+        padding: 20px 40px; /* Ещё больше для маленьких экранов */
+        font-size: 24px;
+      }
+
+      #errorMessage {
+        font-size: 14px;
+        padding: 0 10px;
+      }
     }
   </style>
 </head>
@@ -146,7 +161,7 @@
 
       const melodyPatterns = {
         "Cmaj": [["C4", "E4"], ["E4", "G4"], ["G4", "C5"]],
-        "Gmaj": [["G4", "B4"], ["B4", "D5"], ["D5", "G5"]],
+        "Gmaj": [["G4", 'B4'], ["B4", "D5"], ["D5", "G5"]],
         "Amin": [["A3", "C4"], ["C4", "E4"], ["E4", "A4"]],
         "Fmaj": [["F4", "A4"], ["A4", "C5"], ["C5", "F5"]]
       };
@@ -162,7 +177,6 @@
         resizeTo: window
       });
       document.getElementById('container').appendChild(app.view);
-      console.log("PixiJS приложение инициализировано");
 
       let centerX = app.screen.width / 2;
       let centerY = app.screen.height / 2;
@@ -180,7 +194,6 @@
       window.addEventListener('resize', () => {
         centerX = app.screen.width / 2;
         centerY = app.screen.height / 2;
-        console.log("Размер окна изменён");
       });
 
       const gameContainer = new PIXI.Container();
@@ -259,14 +272,16 @@
       }
 
       let canMove = true;
+
+      // Управление с клавиатуры
       window.addEventListener('keydown', (e) => {
         if (!canMove || isBlinking) return;
         if (e.key === 'ArrowLeft') {
-          cursorPosition = (cursorPosition - 1 + 6) % 6;
+          cursorPosition = (cursorPosition - 1 + 6) % 6; // Против часовой
           cursorAngle = positions[cursorPosition];
           canMove = false;
         } else if (e.key === 'ArrowRight') {
-          cursorPosition = (cursorPosition + 1) % 6;
+          cursorPosition = (cursorPosition + 1) % 6; // По часовой
           cursorAngle = positions[cursorPosition];
           canMove = false;
         }
@@ -274,6 +289,49 @@
 
       window.addEventListener('keyup', (e) => {
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') canMove = true;
+      });
+
+      // Управление тапом для мобильных устройств
+      window.addEventListener('touchstart', (e) => {
+        if (isBlinking) return;
+
+        // Игнорируем тапы на кнопке "Старт/Стоп"
+        const playButton = document.getElementById('playButton');
+        const buttonRect = playButton.getBoundingClientRect();
+        const touch = e.touches[0];
+        const touchX = touch.clientX;
+        const touchY = touch.clientY;
+
+        // Проверяем, попал ли тап на кнопку
+        if (
+          touchX >= buttonRect.left &&
+          touchX <= buttonRect.right &&
+          touchY >= buttonRect.top &&
+          touchY <= buttonRect.bottom
+        ) {
+          return; // Тап на кнопке — игнорируем для управления курсором
+        }
+
+        if (!canMove) return;
+
+        // Определяем, в какой половине экрана произошёл тап
+        const screenWidth = window.innerWidth;
+        const halfScreen = screenWidth / 2;
+
+        if (touchX < halfScreen) {
+          // Левая половина: против часовой (как стрелка влево)
+          cursorPosition = (cursorPosition - 1 + 6) % 6;
+          cursorAngle = positions[cursorPosition];
+        } else {
+          // Правая половина: по часовой (как стрелка вправо)
+          cursorPosition = (cursorPosition + 1) % 6;
+          cursorAngle = positions[cursorPosition];
+        }
+        canMove = false;
+      });
+
+      window.addEventListener('touchend', () => {
+        canMove = true;
       });
 
       function updateCursor() {}
@@ -287,7 +345,6 @@
         const colors = getColors();
         const obstacle = { side, radius: startRadius, speed: 3, graphics: new PIXI.Graphics(), color: colors.lineColor };
         obstacles.push(obstacle);
-        console.log('Создано препятствие:', obstacle);
       }
 
       function lineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
@@ -364,7 +421,6 @@
             gameContainer.removeChild(obstacle.graphics);
             obstacle.graphics.destroy();
             obstacles.splice(i, 1);
-            console.log('Препятствие удалено:', obstacle);
           } else {
             const line = drawObstacle(obstacle);
             if (line && !isBlinking) {
@@ -519,7 +575,6 @@
           const position = Tone.Transport.position.split(":");
           const measures = parseInt(position[0], 10);
           const chordIndex = measures % chordProgression.length;
-          console.log("Chord Index:", chordIndex, "Chord Name:", chordNames[chordIndex]);
 
           const chord = chordProgression[chordIndex];
           const bassNote = bassProgression[chordIndex];
@@ -528,7 +583,6 @@
 
           const patterns = melodyPatterns[chordNames[chordIndex]];
           if (!patterns) {
-            console.error("Patterns undefined for chord:", chordNames[chordIndex]);
             return;
           }
           const melody = getRandomPattern(patterns);
@@ -581,7 +635,6 @@
           createSynths();
         } else {
           await Tone.start();
-          console.log("Аудиоконтекст активирован");
           await generateTrack();
           Tone.Transport.start();
           bpmInterval = setInterval(() => {
@@ -597,7 +650,6 @@
       const baseObstacleInterval = 2;
 
       function animate(delta) {
-        console.log("Анимация запущена");
         rotationAngle += rotationSpeed;
         tiltTime += delta / 60;
         tiltAngle = Math.sin(tiltTime * 0.1) * 0.2;
